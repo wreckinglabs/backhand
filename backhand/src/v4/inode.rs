@@ -76,14 +76,13 @@ pub enum InodeId {
     BasicCharacterDevice = 5,
     BasicNamedPipe       = 6, // aka FIFO
     BasicSocket          = 7,
-    ExtendedDirectory    = 8,
-    ExtendedFile         = 9,
-    // TODO:
-    // Extended Symlink = 10
-    // Extended Block Device = 11
-    // Extended Character Device = 12
-    // Extended Named Pipe (FIFO) = 13
-    // Extended Socked = 14
+    ExtendedDirectory       = 8,
+    ExtendedFile            = 9,
+    ExtendedSymlink         = 10,
+    ExtendedBlockDevice     = 11,
+    ExtendedCharacterDevice = 12,
+    ExtendedNamedPipe       = 13,
+    ExtendedSocket          = 14,
 }
 
 impl InodeId {
@@ -91,6 +90,11 @@ impl InodeId {
         match self {
             Self::ExtendedDirectory => InodeId::BasicDirectory,
             Self::ExtendedFile => InodeId::BasicFile,
+            Self::ExtendedSymlink => InodeId::BasicSymlink,
+            Self::ExtendedBlockDevice => InodeId::BasicBlockDevice,
+            Self::ExtendedCharacterDevice => InodeId::BasicCharacterDevice,
+            Self::ExtendedNamedPipe => InodeId::BasicNamedPipe,
+            Self::ExtendedSocket => InodeId::BasicSocket,
             _ => self,
         }
     }
@@ -129,6 +133,21 @@ pub enum InodeInner {
 
     #[deku(id = "InodeId::ExtendedFile")]
     ExtendedFile(#[deku(ctx = "bytes_used, block_size, block_log")] ExtendedFile),
+
+    #[deku(id = "InodeId::ExtendedSymlink")]
+    ExtendedSymlink(ExtendedSymlink),
+
+    #[deku(id = "InodeId::ExtendedBlockDevice")]
+    ExtendedBlockDevice(ExtendedDeviceSpecialFile),
+
+    #[deku(id = "InodeId::ExtendedCharacterDevice")]
+    ExtendedCharacterDevice(ExtendedDeviceSpecialFile),
+
+    #[deku(id = "InodeId::ExtendedNamedPipe")]
+    ExtendedNamedPipe(ExtendedIPCNode),
+
+    #[deku(id = "InodeId::ExtendedSocket")]
+    ExtendedSocket(ExtendedIPCNode),
 }
 
 #[derive(Debug, DekuRead, DekuWrite, DekuSize, Clone, Copy, PartialEq, Eq, Default)]
@@ -246,4 +265,29 @@ pub struct BasicDeviceSpecialFile {
 #[deku(endian = "endian", ctx = "endian: deku::ctx::Endian")]
 pub struct IPCNode {
     pub link_count: u32,
+}
+
+#[derive(Debug, DekuRead, DekuWrite, Clone, PartialEq, Eq)]
+#[deku(endian = "endian", ctx = "endian: deku::ctx::Endian")]
+pub struct ExtendedSymlink {
+    pub link_count: u32,
+    pub target_size: u32,
+    #[deku(count = "target_size")]
+    pub target_path: Vec<u8>,
+    pub xattr_index: u32,
+}
+
+#[derive(Debug, DekuRead, DekuWrite, Clone, PartialEq, Eq)]
+#[deku(endian = "endian", ctx = "endian: deku::ctx::Endian")]
+pub struct ExtendedDeviceSpecialFile {
+    pub link_count: u32,
+    pub device_number: u32,
+    pub xattr_index: u32,
+}
+
+#[derive(Debug, DekuRead, DekuWrite, Clone, PartialEq, Eq)]
+#[deku(endian = "endian", ctx = "endian: deku::ctx::Endian")]
+pub struct ExtendedIPCNode {
+    pub link_count: u32,
+    pub xattr_index: u32,
 }
