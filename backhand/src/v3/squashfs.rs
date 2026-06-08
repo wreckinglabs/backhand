@@ -624,7 +624,7 @@ impl<'b> Squashfs<'b> {
         info!("created fs tree");
         let filesystem = FilesystemReader {
             kind: self.kind,
-            block_size: self.superblock.block_size_1 as u32,
+            block_size: self.superblock.block_size,
             block_log: self.superblock.block_log,
             compressor: None,
             mod_time: self.superblock.mkfs_time,
