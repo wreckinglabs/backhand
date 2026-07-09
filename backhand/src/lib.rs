@@ -88,6 +88,7 @@ pub use crate::v4::squashfs::{
     DEFAULT_BLOCK_SIZE, DEFAULT_PAD_LEN, Flags, MAX_BLOCK_SIZE, MIN_BLOCK_SIZE, Squashfs,
     SuperBlock,
 };
+pub use crate::v4::xattr::{Xattr, XattrPrefix};
 
 pub use crate::error::BackhandError;
 pub use crate::traits::squashfs::create_squashfs_from_kind;

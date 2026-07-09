@@ -21,6 +21,9 @@ use crate::v4::inode::{ExtendedSymlink, Inode, InodeId, InodeInner};
 use crate::v4::metadata;
 use crate::v4::reader::{BufReadSeek, SquashFsReader, SquashfsReaderWithOffset};
 use crate::v4::unix_string::OsStringExt;
+use crate::v4::xattr::{
+    XATTR_VALUE_OOL, XATTR_VALUE_OOL_SIZE, Xattr, XattrEntry, XattrPrefix, XattrTable, XattrValue,
+};
 use crate::{
     Export, FilesystemReader, Id, Node, NodeHeader, SquashfsBlockDevice, SquashfsCharacterDevice,
     SquashfsDir, SquashfsFileReader, SquashfsSymlink,
@@ -80,7 +83,6 @@ pub struct SuperBlock {
     /// Because SquashFS archives must be padded to a multiple of the underlying device block size, this can be less than the actual file size.
     pub bytes_used: u64,
     pub id_table: u64,
-    //TODO: add read into Squashfs
     pub xattr_table: u64,
     pub inode_table: u64,
     pub dir_table: u64,
@@ -210,6 +212,8 @@ pub struct Squashfs<'b> {
     pub export: Option<Vec<Export>>,
     /// Id Lookup Table Cache
     pub id: Vec<Id>,
+    /// Xattr Id Table + key/value metadata region cache, absent when the image has no xattrs
+    pub xattr_table: Option<XattrTable>,
     //file reader
     pub file: Box<dyn BufReadSeek + 'b>,
 }
@@ -375,6 +379,9 @@ impl<'b> Squashfs<'b> {
         let id_ptr = id.0;
         let id_table = id.1;
 
+        info!("Reading Xattrs");
+        let xattr_table = reader.xattr_table(&superblock, &kind)?;
+
         let last_dir_position = if let Some(fragment_ptr) = fragment_ptr {
             trace!("using fragment for end of dir");
             fragment_ptr
@@ -404,6 +411,7 @@ impl<'b> Squashfs<'b> {
             fragments: fragment_table,
             export: export_table,
             id: id_table,
+            xattr_table,
             file: reader,
         };
 
@@ -573,10 +581,12 @@ impl<'b> Squashfs<'b> {
                         InodeId::BasicSocket | InodeId::ExtendedSocket => InnerNode::Socket,
                         InodeId::ExtendedFile => return Err(BackhandError::UnsupportedInode),
                     };
+                    let xattrs = self.xattrs_for_inode(found_inode)?;
                     let node = Node::new(
                         fullpath.clone(),
                         NodeHeader::from_inode(header, id_table)?,
                         inner,
+                        xattrs,
                     );
                     root.nodes.push(node);
                     fullpath.pop();
@@ -585,6 +595,93 @@ impl<'b> Squashfs<'b> {
         }
         //TODO: todo!("verify all the paths are valid");
         Ok(())
+    }
+
+    /// Index into the xattr id table for `inode`, if any. `None` for inode variants that don't
+    /// carry a `xattr_index` field at all (e.g. `BasicFile`); `Some(0xffff_ffff)` for extended
+    /// variants that were written with no xattrs.
+    fn xattr_index(inode: &Inode) -> Option<u32> {
+        match &inode.inner {
+            InodeInner::ExtendedDirectory(x) => Some(x.xattr_index),
+            InodeInner::ExtendedFile(x) => Some(x.xattr_index),
+            InodeInner::ExtendedSymlink(x) => Some(x.xattr_index),
+            InodeInner::ExtendedBlockDevice(x) => Some(x.xattr_index),
+            InodeInner::ExtendedCharacterDevice(x) => Some(x.xattr_index),
+            InodeInner::ExtendedNamedPipe(x) => Some(x.xattr_index),
+            InodeInner::ExtendedSocket(x) => Some(x.xattr_index),
+            _ => None,
+        }
+    }
+
+    /// Resolve the xattrs attached to `inode`, if any
+    fn xattrs_for_inode(&self, inode: &Inode) -> Result<Vec<Xattr>, BackhandError> {
+        const NO_XATTRS: u32 = 0xffff_ffff;
+
+        let Some(xattr_index) = Self::xattr_index(inode) else {
+            return Ok(vec![]);
+        };
+        if xattr_index == NO_XATTRS {
+            return Ok(vec![]);
+        }
+        let Some(xattr_table) = &self.xattr_table else {
+            return Ok(vec![]);
+        };
+
+        let xattr_id = xattr_table.ids.get(xattr_index as usize).ok_or_else(|| {
+            BackhandError::InvalidXattrTable(format!("xattr index {xattr_index} out of range"))
+        })?;
+
+        let bytes = self.xattr_kv_bytes(xattr_table, xattr_id.xattr)?;
+        let mut cursor = Cursor::new(bytes);
+        let mut reader = Reader::new(&mut cursor);
+        let mut xattrs = Vec::with_capacity(xattr_id.count as usize);
+        for _ in 0..xattr_id.count {
+            let entry = XattrEntry::from_reader_with_ctx(&mut reader, self.kind.inner.type_endian)?;
+            let prefix = XattrPrefix::try_from(entry.xattr_type)?;
+            let name = String::from_utf8(entry.name)?;
+            let value = if entry.xattr_type & XATTR_VALUE_OOL != 0 {
+                let ool =
+                    XattrValue::from_reader_with_ctx(&mut reader, self.kind.inner.type_endian)?;
+                if ool.value.len() != XATTR_VALUE_OOL_SIZE {
+                    return Err(BackhandError::InvalidXattrTable(format!(
+                        "OOL reference must be {XATTR_VALUE_OOL_SIZE} bytes, got {}",
+                        ool.value.len()
+                    )));
+                }
+                let mut ref_cursor = Cursor::new(&ool.value);
+                let mut ref_reader = Reader::new(&mut ref_cursor);
+                let reference =
+                    u64::from_reader_with_ctx(&mut ref_reader, self.kind.inner.type_endian)?;
+
+                let ool_bytes = self.xattr_kv_bytes(xattr_table, reference)?;
+                let mut ool_cursor = Cursor::new(ool_bytes);
+                let mut ool_reader = Reader::new(&mut ool_cursor);
+                XattrValue::from_reader_with_ctx(&mut ool_reader, self.kind.inner.type_endian)?
+                    .value
+            } else {
+                XattrValue::from_reader_with_ctx(&mut reader, self.kind.inner.type_endian)?.value
+            };
+            xattrs.push(Xattr { prefix, name, value });
+        }
+
+        Ok(xattrs)
+    }
+
+    /// Slice of the cached xattr key/value metadata region starting at `location`
+    /// (`(block << 16) | offset`, same convention as `SuperBlock::root_inode`)
+    fn xattr_kv_bytes<'a>(
+        &self,
+        xattr_table: &'a XattrTable,
+        location: u64,
+    ) -> Result<&'a [u8], BackhandError> {
+        let block = location >> 16;
+        let offset = (location & 0xffff) as usize;
+        let block_offset = *xattr_table.kv_map.get(&block).ok_or_else(|| {
+            BackhandError::InvalidXattrTable(format!("xattr block {block:#x} not found"))
+        })?;
+        xattr_table.kv_bytes.get(block_offset as usize + offset..).ok_or_else(|| {
+            BackhandError::InvalidXattrTable("xattr entry offset out of range".to_string())
+        })
     }
 
     /// Symlink target path

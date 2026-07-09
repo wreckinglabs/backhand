@@ -8,6 +8,7 @@ use crate::error::BackhandError;
 use crate::v4::data::Added;
 use crate::v4::filesystem::normalize_squashfs_path;
 use crate::v4::inode::{BasicFile, ExtendedFile, InodeHeader};
+use crate::v4::xattr::Xattr;
 use crate::{DataSize, FilesystemReaderFile, Id};
 
 /// File information for Node
@@ -46,6 +47,9 @@ pub struct Node<T> {
     pub fullpath: PathBuf,
     pub header: NodeHeader,
     pub inner: InnerNode<T>,
+    /// Extended attributes attached to this node. Always empty for SquashFS images with no
+    /// xattr table, or for nodes written without any set.
+    pub xattrs: Vec<Xattr>,
 }
 
 impl<T> PartialEq for Node<T> {
@@ -66,14 +70,19 @@ impl<T> Ord for Node<T> {
 }
 
 impl<T> Node<T> {
-    pub(crate) fn new(fullpath: PathBuf, header: NodeHeader, inner: InnerNode<T>) -> Self {
-        Self { fullpath, header, inner }
+    pub(crate) fn new(
+        fullpath: PathBuf,
+        header: NodeHeader,
+        inner: InnerNode<T>,
+        xattrs: Vec<Xattr>,
+    ) -> Self {
+        Self { fullpath, header, inner, xattrs }
     }
 
     pub fn new_root(header: NodeHeader) -> Self {
         let fullpath = PathBuf::from("/");
         let inner = InnerNode::Dir(SquashfsDir::default());
-        Self { fullpath, header, inner }
+        Self { fullpath, header, inner, xattrs: vec![] }
     }
 }
 

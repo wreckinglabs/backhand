@@ -16,6 +16,7 @@ use crate::v4::id::Id;
 use crate::v4::inode::Inode;
 use crate::v4::metadata::METADATA_MAXSIZE;
 use crate::v4::squashfs::{NOT_SET, SuperBlock};
+use crate::v4::xattr::{XattrId, XattrIdTable, XattrTable};
 use crate::v4::{fragment, metadata};
 
 /// Private struct containing logic to read the `Squashfs` section from a file
@@ -213,6 +214,48 @@ pub trait SquashFsReader: BufReadSeek + Sized {
         let count = superblock.id_count as u64;
         let (ptr, table) = self.lookup_table::<Id>(superblock, ptr, count, kind)?;
         Ok((ptr, table))
+    }
+
+    /// Parse and Cache the Xattr Id table and its key/value metadata region
+    ///
+    /// Unlike the id/fragment/export tables, `superblock.xattr_table` points at a
+    /// [`XattrIdTable`] header rather than directly at the lookup table's leading pointer. The
+    /// header's `xattr_ids` count and the space immediately following it (the raw index array
+    /// for the [`XattrId`] metadata blocks) still follow the same convention as the other
+    /// lookup tables, so [`Self::lookup_table`] is reused for that part.
+    fn xattr_table(
+        &mut self,
+        superblock: &SuperBlock,
+        kind: &Kind,
+    ) -> Result<Option<XattrTable>, BackhandError> {
+        if superblock.xattr_table == NOT_SET {
+            return Ok(None);
+        }
+
+        self.seek(SeekFrom::Start(superblock.xattr_table))?;
+        let mut header_buf = [0u8; XattrIdTable::SIZE_BYTES.unwrap()];
+        self.read_exact(&mut header_buf)?;
+        let mut cursor = Cursor::new(header_buf);
+        let mut deku_reader = Reader::new(&mut cursor);
+        let header = XattrIdTable::from_reader_with_ctx(&mut deku_reader, kind.inner.type_endian)?;
+
+        let ids = if header.xattr_ids == 0 {
+            vec![]
+        } else {
+            let seek = superblock.xattr_table + XattrIdTable::SIZE_BYTES.unwrap() as u64;
+            let size = u64::from(header.xattr_ids) * XattrId::SIZE as u64;
+            let (_, ids) = self.lookup_table::<XattrId>(superblock, seek, size, kind)?;
+            ids
+        };
+
+        let (kv_map, kv_bytes) = self.uncompress_metadatas(
+            header.xattr_table_start,
+            superblock,
+            superblock.xattr_table,
+            kind,
+        )?;
+
+        Ok(Some(XattrTable { ids, kv_map, kv_bytes }))
     }
 
     /// Parse Lookup Table

@@ -65,3 +65,6 @@ name = "unsquashfs"
 
 [[test]]
 name = "large_files"
+
+[[test]]
+name = "xattr"

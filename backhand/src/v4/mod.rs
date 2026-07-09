@@ -18,6 +18,7 @@ pub mod metadata;
 pub mod reader;
 pub mod squashfs;
 pub mod unix_string;
+pub mod xattr;
 
 /// V4 implementation of SquashfsVersion trait
 pub struct V4;
@@ -74,6 +75,9 @@ impl<'b> SquashfsVersion<'b> for V4 {
             fragments: squashfs.fragments,
             export: squashfs.export,
             id: squashfs.id,
+            // `GenericSquashfs` is a version-agnostic DTO shared with v3, which has no xattr
+            // table equivalent; xattrs aren't available when going through this generic path.
+            xattr_table: None,
             file: squashfs.file,
         };
 

@@ -230,7 +230,12 @@ impl<'a, 'b, 'c> FilesystemWriter<'a, 'b, 'c> {
                     InnerNode::NamedPipe => InnerNode::NamedPipe,
                     InnerNode::Socket => InnerNode::Socket,
                 };
-                Node { fullpath: node.fullpath.clone(), header: node.header, inner }
+                Node {
+                    fullpath: node.fullpath.clone(),
+                    header: node.header,
+                    inner,
+                    xattrs: node.xattrs.clone(),
+                }
             })
             .collect();
         root.sort();
@@ -277,7 +282,7 @@ impl<'a, 'b, 'c> FilesystemWriter<'a, 'b, 'c> {
         self.lookup_add_id(header.uid);
 
         let path = normalize_squashfs_path(path.as_ref())?;
-        let node = Node::new(path, header, node);
+        let node = Node::new(path, header, node, vec![]);
         self.root.insert(node)
     }
 

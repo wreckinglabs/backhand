@@ -194,7 +194,12 @@ impl From<&crate::v4::filesystem::node::Node<crate::v4::filesystem::node::Squash
             crate::v4::filesystem::node::InnerNode::NamedPipe => BackhandInnerNode::NamedPipe,
             crate::v4::filesystem::node::InnerNode::Socket => BackhandInnerNode::Socket,
         };
-        Self { fullpath: v4_node.fullpath.clone(), header: v4_node.header.into(), inner }
+        Self {
+            fullpath: v4_node.fullpath.clone(),
+            header: v4_node.header.into(),
+            inner,
+            xattrs: v4_node.xattrs.clone(),
+        }
     }
 }
 
@@ -224,7 +229,12 @@ impl From<&crate::v3::filesystem::node::Node<crate::v3::filesystem::node::Squash
             crate::v3::filesystem::node::InnerNode::NamedPipe => BackhandInnerNode::NamedPipe,
             crate::v3::filesystem::node::InnerNode::Socket => BackhandInnerNode::Socket,
         };
-        Self { fullpath: v3_node.fullpath.clone(), header: v3_node.header.into(), inner }
+        Self {
+            fullpath: v3_node.fullpath.clone(),
+            header: v3_node.header.into(),
+            inner,
+            xattrs: vec![], // v3 doesn't support xattr
+        }
     }
 }
 
@@ -233,6 +243,7 @@ pub struct BackhandNode {
     pub fullpath: PathBuf,
     pub header: BackhandNodeHeader,
     pub inner: BackhandInnerNode,
+    pub xattrs: Vec<crate::v4::xattr::Xattr>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

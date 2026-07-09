@@ -76,6 +76,9 @@ pub enum BackhandError {
 
     #[error("compression initialization failed: {0}")]
     CompressionInit(String),
+
+    #[error("invalid or unsupported xattr table entry: {0}")]
+    InvalidXattrTable(String),
 }
 
 impl From<BackhandError> for io::Error {
@@ -105,7 +108,8 @@ impl From<BackhandError> for io::Error {
             | MutexPoisoned
             | IdNotFoundInTable
             | InternalState(_)
-            | CompressionInit(_) => Self::from(io::ErrorKind::InvalidData),
+            | CompressionInit(_)
+            | InvalidXattrTable(_) => Self::from(io::ErrorKind::InvalidData),
         }
     }
 }
